@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LMS</title>
+</head>
+<body>
+    <main>
+        <section class="macos-window-controls">
+            <svg>
+                <circle cx="8" cy="8" r="8" fill="red" />
+            </svg>
+
+            <svg>
+                <circle cx="8" cy="8" r="8" fill="yellow" />
+            </svg>
+
+            <svg>
+                <circle cx="8" cy="8" r="8" fill="green" />
+            </svg>
+        </section>
+
+        <h1>ЛМСОЧКА</h1>
+        <p>ЛМСОЧКА - это лучшая ЛМСочка в мире</p>
+        
+        <form class="form-container" onsubmit="return sanitizeForm()">
+            <label class="form-label" for="username">Имя пользователя:</label>
+            <input type="text" id="username" name="username" placeholder="Введите имя пользователя">
+
+            <br>
+
+            <label class="form-label" for="password">Пароль:</label>
+            <input type="password" id="password" name="password" placeholder="Введите пароль">
+
+            <br>
+
+            <button type="submit">Войти</button>
+        </form>
+        
+        <footer>
+            <a href="#" target="_blank">сброс пароля</a>
+            <p>© 2026 ЛМСОЧКА. Все права защищены.</p>
+        </footer>
+    </main>
+
+    <script>
+        // MUST DO: ЭКРАНИЗАЦИЯ ВВОДА HTML, ЧТОБЫ ПРЕДОТВРАТИТЬ XSS-АТАКИ!!!
+        // MUST DO: НА СЕРВЕРЕ ДОЛЖНА БЫТЬ SQLI ПРОВЕРКА, ЧТОБЫ ПРЕДОТВРАТИТЬ SQLI-АТАКИ!!!
+        function escapeInput(str) {
+            return str
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // Обработка ввода username и password
+        function sanitizeForm() {
+            let usernameField = document.getElementById("username");
+            let passwordField = document.getElementById("password");
+
+            usernameField.value = escapeInput(usernameField.value.trim());
+
+            return true;
+        }
+    </script>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: url('https://cdn.neowin.com/news/images/uploaded/2024/06/1718089533_sequoiadark.jpg') no-repeat center center fixed;
+            background-size: cover;
+        }
+        main {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            
+            width: 500px;
+            height: 700px;
+            background-color: #cfcfcf61;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            transition: all 0.5s ease;
+        }
+        main:hover {
+            background-color: #cfcfcf9e;
+            backdrop-filter: blur(10px);
+        }
+        main h1 {
+            margin-top: 100px;
+            font-size: 60px;
+            color: #333;
+        }
+        main p {
+            font-size: 16px;
+            color: #555;
+            margin-top: -40px;
+        }
+
+
+        .macos-window-controls {
+            position: relative;
+            display: flex;
+            align-items: center;
+            top: 80px;
+            left: 20px;
+            width: 80px;
+            height: 30px;
+        }
+
+        .form-container {
+            margin-top: 100px;
+        }
+        .form-label {
+            display: flex;
+            margin-top: 20px;
+            margin-left: 40px;
+            font-size: 14px;
+            color: #333;
+        }
+        input {
+            width: 80%;
+            padding: 10px;
+            margin-top: 5px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #dbdbdbad;
+            transition: all 0.3s ease;
+        }
+        input:focus {
+            outline: none;
+            border-color: #888;
+            background-color: #dbdbdb;
+        }
+        button {
+            margin-top: 30px;
+            padding: 10px 20px;
+            font-size: 16px;
+            color: #fff;
+            background-color: #007bff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:active {
+            background-color: #004080;
+        }
+        
+        footer {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+        }
+        footer a {
+            color: #007bff;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        footer a:hover {
+            text-decoration: underline;
+        }
+        footer p {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #555;
+        }
+
+        /* Анимация для кнопки входа */
+        @keyframes buttonHover {
+            0% {
+                background-color: #007bff;
+                transform: scale(1);
+            }
+            50% {
+                background-color: #0056b3;
+                transform: scale(1.05);
+            }
+            100% {
+                background-color: #007bff;
+                transform: scale(1);
+            }
+        }
+        button:hover {
+            animation: buttonHover 0.3s ease-in-out;
+        }
+
+        /* сделаем верстку для мобильных устройств */
+        @media (max-width: 768px) {
+            main {
+                width: 90%;
+                height: 80%;
+            }
+            main h1 {
+                font-size: 40px;
+            }
+            main p {
+                margin-top: -20px;
+                font-size: 12px;
+            }
+            .form-label {
+                font-size: 12px;
+            }
+            input {
+                width: 80%;
+            }
+            footer {
+                bottom: 10px;
+            }
+            footer a {
+                font-size: 12px;
+                margin-bottom: 15px;
+            }
+            footer p {
+                font-size: 10px;
+            }
+        }
+    </style>
+</body>
+</html>
