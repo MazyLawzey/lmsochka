@@ -1,4 +1,4 @@
-<img width="1710" height="920" alt="image" src="https://github.com/user-attachments/assets/5042fa13-ea18-4eee-86ab-1cee93cab9ef" /><div align="center">
+<div align="center">
   
   # ЛМСОЧКА
   Learning Management System
