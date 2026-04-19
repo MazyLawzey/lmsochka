@@ -1,263 +1,176 @@
-import sqlite3
-import bcrypt
-from contextlib import contextmanager
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float, Boolean, ForeignKey, Text, Enum, UniqueConstraint
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
+from datetime import datetime
+import enum
 
-class Database:
-    """
-    Thread-safe обёртка над SQLite для LMS.
-    Каждый вызов _get_conn() создаёт соединение для текущего потока.
-    Для Flask используй get_db() / close_db() через app context.
-    """
+from CONFIG.config import settings
 
-    def __init__(self, db_name: str = 'lms.db'):
-        self.db_name = db_name
-        # Инициализируем схему через отдельное соединение
-        with self._connect() as conn:
-            self._create_tables(conn)
+# Создание движка БД
+engine = create_engine(
+    settings.DATABASE_URL,
+    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
+)
 
-    # ──────────────────────────── СОЕДИНЕНИЕ ────────────────────────────
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_name)
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.row_factory = sqlite3.Row
-        return conn
 
-    @contextmanager
-    def _get_conn(self):
-        """Context manager: одно соединение на вызов — thread-safe."""
-        conn = self._connect()
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+class RoleEnum(str, enum.Enum):
+    """Роли пользователей"""
+    ADMIN = "admin"
+    TEACHER = "teacher"
+    STUDENT = "student"
 
-    # ──────────────────────────── СХЕМА ────────────────────────────
 
-    def _create_tables(self, conn: sqlite3.Connection):
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('student', 'teacher', 'admin')),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
+class User(Base):
+    """Модель пользователя"""
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True)
+    full_name = Column(String)
+    hashed_password = Column(String)
+    role = Column(Enum(RoleEnum), default=RoleEnum.STUDENT)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Отношения
+    courses_created = relationship("Course", back_populates="teacher", foreign_keys="Course.teacher_id")
+    course_enrollments = relationship("CourseEnrollment", back_populates="student")
+    assignments_submitted = relationship("AssignmentSubmission", back_populates="student")
+    grades = relationship("Grade", back_populates="grader")
+    progress = relationship("StudentProgress", back_populates="student")
 
-            CREATE TABLE IF NOT EXISTS courses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                description TEXT,
-                teacher_id INTEGER NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE
-            );
 
-            CREATE TABLE IF NOT EXISTS lessons (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                course_id INTEGER NOT NULL,
-                title TEXT NOT NULL,
-                content TEXT,
-                position INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
-            );
+class Course(Base):
+    """Модель курса"""
+    __tablename__ = "courses"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    description = Column(Text)
+    teacher_id = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Отношения
+    teacher = relationship("User", back_populates="courses_created", foreign_keys=[teacher_id])
+    lessons = relationship("Lesson", back_populates="course", cascade="all, delete-orphan")
+    enrollments = relationship("CourseEnrollment", back_populates="course", cascade="all, delete-orphan")
 
-            CREATE TABLE IF NOT EXISTS enrollments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                student_id INTEGER NOT NULL,
-                course_id INTEGER NOT NULL,
-                enrolled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
-                FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
-                UNIQUE(student_id, course_id)
-            );
-        """)
-        conn.commit()
 
-    # ──────────────────────────── USERS ────────────────────────────
+class Lesson(Base):
+    """Модель урока"""
+    __tablename__ = "lessons"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"))
+    title = Column(String, index=True)
+    content = Column(Text)
+    order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Отношения
+    course = relationship("Course", back_populates="lessons")
+    assignments = relationship("Assignment", back_populates="lesson", cascade="all, delete-orphan")
 
-    def add_user(self, username: str, password: str, role: str) -> int | None:
-        """
-        Добавить пользователя.
-        Возвращает id новой записи или None если username занят.
-        """
-        if role not in ('student', 'teacher', 'admin'):
-            raise ValueError(f"Недопустимая роль: {role}")
-        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-        try:
-            with self._get_conn() as conn:
-                cursor = conn.execute(
-                    "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                    (username, hashed, role)
-                )
-                return cursor.lastrowid
-        except sqlite3.IntegrityError:
-            return None  # username уже занят
 
-    def authenticate_user(self, username: str, password: str) -> dict | None:
-        """
-        Аутентификация.
-        Возвращает безопасный dict (без хэша пароля) или None.
-        """
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT id, username, password, role, created_at FROM users WHERE username = ?",
-                (username,)
-            ).fetchone()
-        if row and bcrypt.checkpw(password.encode('utf-8'), row['password'].encode('utf-8')):
-            # Явно исключаем password — чтобы случайный jsonify() не утёк хэш
-            return {'id': row['id'], 'username': row['username'], 'role': row['role'], 'created_at': row['created_at']}
-        return None
+class Assignment(Base):
+    """Модель задания"""
+    __tablename__ = "assignments"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    lesson_id = Column(Integer, ForeignKey("lessons.id"))
+    title = Column(String, index=True)
+    description = Column(Text)
+    due_date = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Отношения
+    lesson = relationship("Lesson", back_populates="assignments")
+    submissions = relationship("AssignmentSubmission", back_populates="assignment", cascade="all, delete-orphan")
 
-    def get_user_by_id(self, user_id: int) -> dict | None:
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT id, username, role, created_at FROM users WHERE id = ?",
-                (user_id,)
-            ).fetchone()
-        return dict(row) if row else None
 
-    def get_user_by_username(self, username: str) -> dict | None:
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT id, username, role, created_at FROM users WHERE username = ?",
-                (username,)
-            ).fetchone()
-        return dict(row) if row else None
+class AssignmentSubmission(Base):
+    """Модель ответа на задание"""
+    __tablename__ = "assignment_submissions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    assignment_id = Column(Integer, ForeignKey("assignments.id"))
+    student_id = Column(Integer, ForeignKey("users.id"))
+    content = Column(Text)
+    submitted_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Отношения
+    assignment = relationship("Assignment", back_populates="submissions")
+    student = relationship("User", back_populates="assignments_submitted")
+    grade = relationship("Grade", back_populates="submission", uselist=False, cascade="all, delete-orphan")
 
-    # ──────────────────────────── COURSES ────────────────────────────
 
-    def add_course(self, title: str, description: str, teacher_id: int) -> int | None:
-        """Создать курс. Возвращает id или None если teacher_id не существует."""
-        try:
-            with self._get_conn() as conn:
-                cursor = conn.execute(
-                    "INSERT INTO courses (title, description, teacher_id) VALUES (?, ?, ?)",
-                    (title, description, teacher_id)
-                )
-                return cursor.lastrowid
-        except sqlite3.IntegrityError:
-            return None
+class Grade(Base):
+    """Модель оценки"""
+    __tablename__ = "grades"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    submission_id = Column(Integer, ForeignKey("assignment_submissions.id"), unique=True)
+    score = Column(Float)
+    max_score = Column(Float, default=100.0)
+    feedback = Column(Text)
+    graded_by = Column(Integer, ForeignKey("users.id"))
+    graded_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Отношения
+    submission = relationship("AssignmentSubmission", back_populates="grade")
+    grader = relationship("User", back_populates="grades", foreign_keys=[graded_by])
 
-    def get_courses(self) -> list[dict]:
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT c.id, c.title, c.description, c.created_at, u.username AS teacher "
-                "FROM courses c JOIN users u ON c.teacher_id = u.id"
-            ).fetchall()
-        return [dict(r) for r in rows]
 
-    def get_course_by_id(self, course_id: int) -> dict | None:
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT c.id, c.title, c.description, c.created_at, u.username AS teacher "
-                "FROM courses c JOIN users u ON c.teacher_id = u.id WHERE c.id = ?",
-                (course_id,)
-            ).fetchone()
-        return dict(row) if row else None
+class CourseEnrollment(Base):
+    """Модель записи студента на курс"""
+    __tablename__ = "course_enrollments"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"))
+    student_id = Column(Integer, ForeignKey("users.id"))
+    enrolled_at = Column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (UniqueConstraint('course_id', 'student_id', name='_course_student_uc'),)
+    
+    # Отношения
+    course = relationship("Course", back_populates="enrollments")
+    student = relationship("User", back_populates="course_enrollments")
 
-    def update_course(self, course_id: int, title: str, description: str) -> bool:
-        with self._get_conn() as conn:
-            cursor = conn.execute(
-                "UPDATE courses SET title = ?, description = ? WHERE id = ?",
-                (title, description, course_id)
-            )
-            return cursor.rowcount > 0
 
-    def delete_course(self, course_id: int) -> bool:
-        with self._get_conn() as conn:
-            return conn.execute(
-                "DELETE FROM courses WHERE id = ?", (course_id,)
-            ).rowcount > 0
+class StudentProgress(Base):
+    """Модель прогресса студента"""
+    __tablename__ = "student_progress"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("users.id"))
+    course_id = Column(Integer, ForeignKey("courses.id"))
+    lessons_completed = Column(Integer, default=0)
+    total_lessons = Column(Integer, default=0)
+    average_score = Column(Float, default=0.0)
+    last_accessed = Column(DateTime, default=datetime.utcnow)
+    
+    # Отношения
+    student = relationship("User", back_populates="progress")
 
-    # ──────────────────────────── LESSONS ────────────────────────────
 
-    def add_lesson(self, course_id: int, title: str, content: str, position: int = 0) -> int | None:
-        try:
-            with self._get_conn() as conn:
-                cursor = conn.execute(
-                    "INSERT INTO lessons (course_id, title, content, position) VALUES (?, ?, ?, ?)",
-                    (course_id, title, content, position)
-                )
-                return cursor.lastrowid
-        except sqlite3.IntegrityError:
-            return None
+def init_db():
+    """Инициализация БД с созданием всех таблиц"""
+    Base.metadata.create_all(bind=engine)
 
-    def get_lessons(self, course_id: int) -> list[dict]:
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT id, title, content, position, created_at FROM lessons "
-                "WHERE course_id = ? ORDER BY position, id",
-                (course_id,)
-            ).fetchall()
-        return [dict(r) for r in rows]
 
-    def get_lesson_by_id(self, lesson_id: int) -> dict | None:
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT id, course_id, title, content, position, created_at "
-                "FROM lessons WHERE id = ?",
-                (lesson_id,)
-            ).fetchone()
-        return dict(row) if row else None
-
-    def update_lesson(self, lesson_id: int, title: str, content: str, position: int) -> bool:
-        with self._get_conn() as conn:
-            cursor = conn.execute(
-                "UPDATE lessons SET title = ?, content = ?, position = ? WHERE id = ?",
-                (title, content, position, lesson_id)
-            )
-            return cursor.rowcount > 0
-
-    def delete_lesson(self, lesson_id: int) -> bool:
-        with self._get_conn() as conn:
-            return conn.execute(
-                "DELETE FROM lessons WHERE id = ?", (lesson_id,)
-            ).rowcount > 0
-
-    # ──────────────────────────── ENROLLMENTS ────────────────────────────
-
-    def enroll_student(self, student_id: int, course_id: int) -> bool:
-        """Записать студента на курс. False если уже записан."""
-        try:
-            with self._get_conn() as conn:
-                conn.execute(
-                    "INSERT INTO enrollments (student_id, course_id) VALUES (?, ?)",
-                    (student_id, course_id)
-                )
-            return True
-        except sqlite3.IntegrityError:
-            return False
-
-    def unenroll_student(self, student_id: int, course_id: int) -> bool:
-        """Отписать студента от курса."""
-        with self._get_conn() as conn:
-            return conn.execute(
-                "DELETE FROM enrollments WHERE student_id = ? AND course_id = ?",
-                (student_id, course_id)
-            ).rowcount > 0
-
-    def get_student_courses(self, student_id: int) -> list[dict]:
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT c.id, c.title, c.description, e.enrolled_at "
-                "FROM enrollments e JOIN courses c ON e.course_id = c.id "
-                "WHERE e.student_id = ?",
-                (student_id,)
-            ).fetchall()
-        return [dict(r) for r in rows]
-
-    def get_course_students(self, course_id: int) -> list[dict]:
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT u.id, u.username, u.role, e.enrolled_at "
-                "FROM enrollments e JOIN users u ON e.student_id = u.id "
-                "WHERE e.course_id = ?",
-                (course_id,)
-            ).fetchall()
-        return [dict(r) for r in rows]
+def get_db():
+    """Dependency для получения сессии БД"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
